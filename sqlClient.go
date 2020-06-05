@@ -10,11 +10,12 @@ import (
 	"log"
 
 	"github.com/aws/aws-lambda-go/cfn"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/secretsmanager"
-	"github.com/aws/aws-sdk-go/service/secretsmanager/secretsmanageriface"
 	_ "github.com/denisenkom/go-mssqldb"
 )
+
+type CachedSecret interface {
+	GetSecretString(string) (string, error)
+}
 
 // DBConfig ...
 type DBConfig struct {
@@ -26,12 +27,12 @@ type DBConfig struct {
 
 // LambdaHandler ...
 type LambdaHandler struct {
-	client          secretsmanageriface.SecretsManagerAPI
+	client          CachedSecret
 	getDBConnection func(string) (*sql.DB, error)
 }
 
 // CreateLambdaHandler ..
-func CreateLambdaHandler(client secretsmanageriface.SecretsManagerAPI, getDBConnection func(string) (*sql.DB, error)) (smClient *LambdaHandler) {
+func CreateLambdaHandler(client CachedSecret, getDBConnection func(string) (*sql.DB, error)) (smClient *LambdaHandler) {
 	return &LambdaHandler{client: client, getDBConnection: getDBConnection}
 }
 
@@ -92,25 +93,11 @@ func (c *LambdaHandler) validateParameters(event cfn.Event, dbSecretID string) (
 }
 
 func (c *LambdaHandler) getConnectionString(dbSecretID, dbName string) (connString string, err error) {
-
-	input := &secretsmanager.GetSecretValueInput{
-		SecretId:     aws.String(dbSecretID),
-		VersionStage: aws.String("AWSCURRENT"), // VersionStage defaults to AWSCURRENT if unspecified
-	}
 	log.Print("Getting Secret")
-	result, err := c.client.GetSecretValue(input)
+	secretString, err := c.client.GetSecretString(dbSecretID)
 	if err != nil {
 		return
 	}
-	var secretString string
-	if result.SecretString != nil {
-		secretString = *result.SecretString
-	}
-	if secretString == "" {
-		err = errors.New("Unable to parse secret")
-		return
-	}
-	log.Print("Converting Secret to json")
 
 	data := &DBConfig{}
 	err = json.Unmarshal([]byte(secretString), data)

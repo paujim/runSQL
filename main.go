@@ -7,18 +7,16 @@ import (
 
 	"github.com/aws/aws-lambda-go/cfn"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/secretsmanager"
-	"github.com/aws/aws-sdk-go/service/secretsmanager/secretsmanageriface"
+	"github.com/aws/aws-secretsmanager-caching-go/secretcache"
+	_ "github.com/denisenkom/go-mssqldb"
 )
 
-var smClient secretsmanageriface.SecretsManagerAPI
+var (
+	secretCache, _ = secretcache.New()
+)
 
 func init() {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	smClient = secretsmanager.New(sess)
+	secretCache, _ = secretcache.New()
 }
 
 func handler(ctx context.Context, event cfn.Event) (physicalResourceID string, jsonObject map[string]interface{}, err error) {
@@ -26,7 +24,7 @@ func handler(ctx context.Context, event cfn.Event) (physicalResourceID string, j
 	getDBConnection := func(connectionString string) (*sql.DB, error) {
 		return sql.Open("sqlserver", connectionString)
 	}
-	return CreateLambdaHandler(smClient, getDBConnection).Handle(os.Getenv("SECRET_ID"), event)
+	return CreateLambdaHandler(secretCache, getDBConnection).Handle(os.Getenv("SECRET_ID"), event)
 }
 
 func main() {

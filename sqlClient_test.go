@@ -7,23 +7,19 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/aws/aws-lambda-go/cfn"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/secretsmanager"
-	"github.com/aws/aws-sdk-go/service/secretsmanager/secretsmanageriface"
 	"github.com/stretchr/testify/assert"
 )
 
 type mockSMClient struct {
-	secretsmanageriface.SecretsManagerAPI
-	value *string
+	value string
 	err   error
 }
 
-func (m *mockSMClient) GetSecretValue(input *secretsmanager.GetSecretValueInput) (*secretsmanager.GetSecretValueOutput, error) {
+func (m *mockSMClient) GetSecretString(input string) (string, error) {
 	if m.err != nil {
-		return nil, m.err
+		return "", m.err
 	}
-	return &secretsmanager.GetSecretValueOutput{SecretString: m.value}, nil
+	return m.value, nil
 }
 
 func TestLambdaHandler(t *testing.T) {
@@ -37,7 +33,7 @@ func TestLambdaHandler(t *testing.T) {
 	}
 
 	var tests = []struct {
-		inputClient   secretsmanageriface.SecretsManagerAPI
+		inputClient   CachedSecret
 		inputEvent    cfn.Event
 		inputSecret   string
 		expectedError string
@@ -70,9 +66,7 @@ func TestLambdaHandler(t *testing.T) {
 				"SqlQuery": "sql",
 			},
 		}, "Secret", "Error from Secret"},
-		{&mockSMClient{
-			value: nil,
-		}, cfn.Event{
+		{&mockSMClient{}, cfn.Event{
 			RequestType: cfn.RequestCreate,
 			ResourceProperties: map[string]interface{}{
 				"Database": "db",
@@ -80,16 +74,7 @@ func TestLambdaHandler(t *testing.T) {
 			},
 		}, "Secret", "Unable to parse secret"},
 		{&mockSMClient{
-			value: aws.String(""),
-		}, cfn.Event{
-			RequestType: cfn.RequestCreate,
-			ResourceProperties: map[string]interface{}{
-				"Database": "db",
-				"SqlQuery": "sql",
-			},
-		}, "Secret", "Unable to parse secret"},
-		{&mockSMClient{
-			value: aws.String("Invalid Json"),
+			value: "Invalid Json",
 		}, cfn.Event{
 			RequestType: cfn.RequestCreate,
 			ResourceProperties: map[string]interface{}{
@@ -123,7 +108,7 @@ func TestHandlerWithSQLSuccess(t *testing.T) {
 	}
 
 	_, _, err = CreateLambdaHandler(&mockSMClient{
-		value: aws.String("{\"host\": \"host\",\"username\": \"user\",\"password\": \"password\", \"port\":1344}"),
+		value: "{\"host\": \"host\",\"username\": \"user\",\"password\": \"password\", \"port\":1344}",
 	}, getDBConnection).Handle("SecretId", cfn.Event{
 		RequestType: cfn.RequestCreate,
 		ResourceProperties: map[string]interface{}{
@@ -153,7 +138,7 @@ func TestHandlerWithSQLError(t *testing.T) {
 	}
 
 	_, _, err = CreateLambdaHandler(&mockSMClient{
-		value: aws.String("{\"host\": \"host\",\"username\": \"user\",\"password\": \"password\", \"port\":1344}"),
+		value: "{\"host\": \"host\",\"username\": \"user\",\"password\": \"password\", \"port\":1344}",
 	}, getDBConnection).Handle("SecretId", cfn.Event{
 		RequestType: cfn.RequestCreate,
 		ResourceProperties: map[string]interface{}{
