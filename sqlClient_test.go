@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -24,34 +25,84 @@ func (m *mockSMClient) GetSecretValue(input *secretsmanager.GetSecretValueInput)
 	return &secretsmanager.GetSecretValueOutput{SecretString: m.value}, nil
 }
 
-func TestCreateSQLClient(t *testing.T) {
+func TestLambdaHandler(t *testing.T) {
+
+	getDBConnection := func(string) (*sql.DB, error) {
+		return nil, nil
+	}
+
 	var tests = []struct {
 		inputClient   secretsmanageriface.SecretsManagerAPI
+		inputEvent    cfn.Event
 		inputSecret   string
 		expectedError string
 	}{
-		{&mockSMClient{}, "", "Missing required 'SECRET_ID' parameter"},
-		{&mockSMClient{err: errors.New("some Error")}, "Secret", "some Error"},
-		{&mockSMClient{value: nil}, "Secret", "Unable to use secret"},
-		{&mockSMClient{value: aws.String("")}, "Secret", "Unable to use secret"},
+		{&mockSMClient{}, cfn.Event{
+			RequestType: cfn.RequestCreate,
+			ResourceProperties: map[string]interface{}{
+				"Database": "db",
+				"SqlQuery": "sql",
+			},
+		}, "", "Missing required 'SECRET_ID' parameter"},
+		{&mockSMClient{}, cfn.Event{
+			RequestType: cfn.RequestCreate,
+			ResourceProperties: map[string]interface{}{
+				"SqlQuery": "sql",
+			},
+		}, "", "Missing required 'Database' parameter"},
+		{&mockSMClient{}, cfn.Event{
+			RequestType: cfn.RequestCreate,
+			ResourceProperties: map[string]interface{}{
+				"Database": "db",
+			},
+		}, "", "Missing required 'SqlQuery' parameter"},
+		{&mockSMClient{
+			err: errors.New("Error from Secret"),
+		}, cfn.Event{
+			RequestType: cfn.RequestCreate,
+			ResourceProperties: map[string]interface{}{
+				"Database": "db",
+				"SqlQuery": "sql",
+			},
+		}, "Secret", "Error from Secret"},
+		{&mockSMClient{
+			value: nil,
+		}, cfn.Event{
+			RequestType: cfn.RequestCreate,
+			ResourceProperties: map[string]interface{}{
+				"Database": "db",
+				"SqlQuery": "sql",
+			},
+		}, "Secret", "Unable to parse secret"},
+		{&mockSMClient{
+			value: aws.String(""),
+		}, cfn.Event{
+			RequestType: cfn.RequestCreate,
+			ResourceProperties: map[string]interface{}{
+				"Database": "db",
+				"SqlQuery": "sql",
+			},
+		}, "Secret", "Unable to parse secret"},
+		{&mockSMClient{
+			value: aws.String("Invalid Json"),
+		}, cfn.Event{
+			RequestType: cfn.RequestCreate,
+			ResourceProperties: map[string]interface{}{
+				"Database": "db",
+				"SqlQuery": "sql",
+			},
+		}, "Secret", "invalid character 'I' looking for beginning of value"},
 	}
 
 	for _, test := range tests {
-		assert.EqualError(t, createSQLClient(test.inputClient, test.inputSecret).err, test.expectedError)
+		_, _, err := CreateLambdaHandler(test.inputClient, getDBConnection).Handle(test.inputSecret, test.inputEvent)
+		assert.EqualError(t, err, test.expectedError, test)
 	}
 
-	client := createSQLClient(&mockSMClient{value: aws.String("Not valid json")}, "Secret")
-	assert.Error(t, client.err, "Expected an error converting json")
+	// client := createSQLClient(&mockSMClient{value: aws.String("Not valid json")}, "Secret")
+	// assert.Error(t, client.err, "Expected an error converting json")
 
-	client = createSQLClient(&mockSMClient{value: aws.String("Not valid json")}, "Secret")
-	assert.Error(t, client.err, "Expected an error converting json")
-
-}
-
-func TestProcess(t *testing.T) {
-
-	sqlClient := SQLClient{err: errors.New("Has Error")}
-	_, _, err := sqlClient.Process(cfn.Event{})
-	assert.EqualError(t, err, "Has Error")
+	// client = createSQLClient(&mockSMClient{value: aws.String("Not valid json")}, "Secret")
+	// assert.Error(t, client.err, "Expected an error converting json")
 
 }

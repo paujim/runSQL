@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/sha1"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 
 	"github.com/aws/aws-lambda-go/cfn"
@@ -20,172 +23,126 @@ type DBConfig struct {
 	Password string `json:"password"`
 }
 
-// SQLClient ...
-type SQLClient struct {
-	*DBConfig
-	err error
+// LambdaHandler ...
+type LambdaHandler struct {
+	client          secretsmanageriface.SecretsManagerAPI
+	getDBConnection func(string) (*sql.DB, error)
 }
 
-func createSQLClient(client secretsmanageriface.SecretsManagerAPI, dbSecretID string) (smClient *SQLClient) {
-	smClient = &SQLClient{}
+// CreateLambdaHandler ..
+func CreateLambdaHandler(client secretsmanageriface.SecretsManagerAPI, getDBConnection func(string) (*sql.DB, error)) (smClient *LambdaHandler) {
+	return &LambdaHandler{client: client, getDBConnection: getDBConnection}
+}
 
-	if dbSecretID == "" {
-		smClient.err = errors.New("Missing required 'SECRET_ID' parameter")
+// Handle ...
+func (c *LambdaHandler) Handle(dbSecretID string, event cfn.Event) (physicalResourceID string, jsonObject map[string]interface{}, err error) {
+	eventJSON, _ := json.MarshalIndent(event, "", "  ")
+	log.Printf("EVENT: %s\n", string(eventJSON))
+
+	jsonObject = map[string]interface{}{}
+	physicalResourceID = event.PhysicalResourceID
+
+	switch event.RequestType {
+	case cfn.RequestCreate:
+		var dbName, connectionString, query string
+		dbName, query, err = c.validateParameters(event, dbSecretID)
+		if err != nil {
+			return
+		}
+		connectionString, err = c.getConnectionString(dbSecretID, dbName)
+		if err != nil {
+			return
+		}
+		err = c.run(connectionString, query)
+		if err != nil {
+			return
+		}
+		physicalResourceID = c.getHash(dbName + query + dbSecretID)
+	default:
+		log.Printf("Ignore: %s", event.RequestType)
+	}
+	return
+}
+
+func (c *LambdaHandler) getHash(s string) string {
+	h := sha1.New()
+	h.Write([]byte(s))
+	bs := h.Sum(nil)
+	return string(bs)
+}
+
+func (c *LambdaHandler) validateParameters(event cfn.Event, dbSecretID string) (dbName, sqlQuery string, err error) {
+	var ok bool
+	dbName, ok = event.ResourceProperties["Database"].(string)
+	if !ok {
+
+		err = errors.New("Missing required 'Database' parameter")
 		return
 	}
+	sqlQuery, ok = event.ResourceProperties["SqlQuery"].(string)
+	if !ok {
+		err = errors.New("Missing required 'SqlQuery' parameter")
+		return
+	}
+	if dbSecretID == "" {
+		err = errors.New("Missing required 'SECRET_ID' parameter")
+		return
+	}
+	return
+}
+
+func (c *LambdaHandler) getConnectionString(dbSecretID, dbName string) (connString string, err error) {
 
 	input := &secretsmanager.GetSecretValueInput{
 		SecretId:     aws.String(dbSecretID),
 		VersionStage: aws.String("AWSCURRENT"), // VersionStage defaults to AWSCURRENT if unspecified
 	}
 	log.Print("Getting Secret")
-	result, err := client.GetSecretValue(input)
+	result, err := c.client.GetSecretValue(input)
 	if err != nil {
-		smClient.err = err
 		return
 	}
-
 	var secretString string
 	if result.SecretString != nil {
 		secretString = *result.SecretString
 	}
 	if secretString == "" {
-		smClient.err = errors.New("Unable to use secret")
+		err = errors.New("Unable to parse secret")
 		return
 	}
 	log.Print("Converting Secret to json")
+
 	data := &DBConfig{}
-	smClient.err = json.Unmarshal([]byte(secretString), data)
-	smClient.DBConfig = data
-
-	return
-}
-
-// Process ...
-func (c *SQLClient) Process(event cfn.Event) (physicalResourceID string, jsonObject map[string]interface{}, err error) {
-	if c.err != nil {
-		err = c.err
+	err = json.Unmarshal([]byte(secretString), data)
+	if err != nil {
 		return
 	}
-	// eventJSON, _ := json.MarshalIndent(event, "", "  ")
-	// log.Printf("EVENT: %s\n", string(eventJSON))
 
-	// jsonObject = map[string]interface{}{}
-	// physicalResourceID = event.PhysicalResourceID
-
-	// switch event.RequestType {
-	// case cfn.RequestCreate:
-	// 	sqlClient, sqlerr := createSQLClient(event, smClient)
-	// 	if sqlerr != nil {
-	// 		log.Printf("ERROR: %s", sqlerr.Error())
-	// 		err = sqlerr
-	// 		return
-	// 	}
-	// 	physicalResourceID = sqlClient.Query
-	// 	defer sqlClient.Close()
-
-	// 	if err = sqlClient.run(); err != nil {
-	// 		log.Printf("ERROR: %s", err.Error())
-	// 		return
-	// 	}
-	// default:
-	// 	log.Printf("Ignore: %s", event.RequestType)
-	// }
-
-	// return
-	return
+	connString = fmt.Sprintf("Server=%s;Port=%d;Database=%s;User Id=%s;password=%s; Connection Timeout=%v", data.Host, data.Port, dbName, data.Username, data.Password, 5)
+	log.Printf("ConnectionString: %s\n", connString) // FOR DEBBUGING, YOU MAY WANT TO REMOVE THIS LINE
+	return connString, nil
 }
 
-// func validate(event cfn.Event) (database string, sqlQuery string, dbSecretID string, err error) {
-// 	var ok bool
-// 	database, ok = event.ResourceProperties["Database"].(string)
-// 	if !ok {
-// 		err = errors.New("Missing 'Database' parameter")
-// 		return
-// 	}
-// 	sqlQuery, ok = event.ResourceProperties["SqlQuery"].(string)
-// 	if !ok {
-// 		err = errors.New("Missing 'SqlQuery' parameter")
-// 		return
-// 	}
-// 	dbSecretID, ok = os.Getenv("SECRET_ID")
-// 	if !ok {
-// 		err = errors.New("Missing 'SECRET_ID'")
-// 		return
-// 	}
-// 	return
-// }
+func (c *LambdaHandler) run(connectionString, query string) error {
 
-// func createDBConfig(dbSecretID string, client secretsmanageriface.SecretsManagerAPI) (*DBConfig, error) {
+	dbConn, err := c.getDBConnection(connectionString)
+	if err != nil {
+		return err
+	}
+	defer dbConn.Close()
 
-// 	input := &secretsmanager.GetSecretValueInput{
-// 		SecretId:     aws.String(dbSecretID),
-// 		VersionStage: aws.String("AWSCURRENT"), // VersionStage defaults to AWSCURRENT if unspecified
-// 	}
-// 	log.Print("Getting Secret")
-// 	result, err := client.GetSecretValue(input)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	var secretString string
-// 	if result.SecretString != nil {
-// 		secretString = *result.SecretString
-// 	}
-// 	if secretString == "" {
-// 		return nil, errors.New("Unable to use secret")
-// 	}
-// 	log.Print("Converting Secret to json")
-// 	data := &DBConfig{}
-// 	err = json.Unmarshal([]byte(secretString), data)
-
-// 	return data, err
-// }
-
-// func createSQLClient(event cfn.Event, client secretsmanageriface.SecretsManagerAPI) (*SQLClient, error) {
-
-// 	dbName, sqlQuery, dbSecretID, err := validate(event)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	dbConfig, err := createDBConfig(dbSecretID, client)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	connString := fmt.Sprintf("Server=%s;Port=%d;Database=%s;User Id=%s;password=%s; Connection Timeout=%v", dbConfig.Host, dbConfig.Port, dbName, dbConfig.Username, dbConfig.Password, 5)
-// 	log.Printf("ConnectionString: %s\n", connString)
-// 	dbConn, err := sql.Open("sqlserver", connString)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	dbClient := &SQLClient{
-// 		conn:  dbConn,
-// 		Query: sqlQuery,
-// 	}
-// 	return dbClient, nil
-// }
-
-// // Close ...
-// func (client *SQLClient) Close() {
-// 	client.conn.Close()
-// }
-
-// func (client *SQLClient) run() error {
-// 	log.Println("Begin Tx")
-// 	tx, err := client.conn.Begin()
-// 	if err != nil {
-// 		return err
-// 	}
-// 	_, err = tx.Exec(client.Query)
-// 	if err != nil {
-// 		log.Println("Fail Tx")
-// 		tx.Rollback()
-// 		return err
-// 	}
-// 	err = tx.Commit()
-// 	log.Println("End Tx")
-// 	return err
-// }
+	log.Println("Begin Tx")
+	tx, err := dbConn.Begin()
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(query)
+	if err != nil {
+		log.Println("Fail Tx")
+		tx.Rollback()
+		return err
+	}
+	err = tx.Commit()
+	log.Println("End Tx")
+	return err
+}
