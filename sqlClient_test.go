@@ -72,7 +72,7 @@ func TestLambdaHandler(t *testing.T) {
 				"Database": "db",
 				"SqlQuery": "sql",
 			},
-		}, "Secret", "Unable to parse secret"},
+		}, "Secret", "unexpected end of JSON input"},
 		{&mockSMClient{
 			value: "Invalid Json",
 		}, cfn.Event{
