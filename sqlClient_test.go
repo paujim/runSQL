@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/aws/aws-lambda-go/cfn"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/secretsmanager"
@@ -28,7 +29,11 @@ func (m *mockSMClient) GetSecretValue(input *secretsmanager.GetSecretValueInput)
 func TestLambdaHandler(t *testing.T) {
 
 	getDBConnection := func(string) (*sql.DB, error) {
-		return nil, nil
+		db, _, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
+		}
+		return db, nil
 	}
 
 	var tests = []struct {
@@ -99,10 +104,63 @@ func TestLambdaHandler(t *testing.T) {
 		assert.EqualError(t, err, test.expectedError, test)
 	}
 
-	// client := createSQLClient(&mockSMClient{value: aws.String("Not valid json")}, "Secret")
-	// assert.Error(t, client.err, "Expected an error converting json")
+}
 
-	// client = createSQLClient(&mockSMClient{value: aws.String("Not valid json")}, "Secret")
-	// assert.Error(t, client.err, "Expected an error converting json")
+func TestHandlerWithSQLSuccess(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
+	}
+	// Closes the database and prevents new queries from starting.
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE users").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	getDBConnection := func(string) (*sql.DB, error) {
+		return db, nil
+	}
+
+	_, _, err = CreateLambdaHandler(&mockSMClient{
+		value: aws.String("{\"host\": \"host\",\"username\": \"user\",\"password\": \"password\", \"port\":1344}"),
+	}, getDBConnection).Handle("SecretId", cfn.Event{
+		RequestType: cfn.RequestCreate,
+		ResourceProperties: map[string]interface{}{
+			"Database": "db",
+			"SqlQuery": "UPDATE users FROM table",
+		}})
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+
+}
+
+func TestHandlerWithSQLError(t *testing.T) {
+	// Setup sql mock
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
+	}
+	// Closes the database and prevents new queries from starting.
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE users").WillReturnError(errors.New("Wrong sql"))
+	mock.ExpectRollback()
+
+	getDBConnection := func(string) (*sql.DB, error) {
+		return db, nil
+	}
+
+	_, _, err = CreateLambdaHandler(&mockSMClient{
+		value: aws.String("{\"host\": \"host\",\"username\": \"user\",\"password\": \"password\", \"port\":1344}"),
+	}, getDBConnection).Handle("SecretId", cfn.Event{
+		RequestType: cfn.RequestCreate,
+		ResourceProperties: map[string]interface{}{
+			"Database": "db",
+			"SqlQuery": "UPDATE users FROM table",
+		}})
+	assert.EqualError(t, err, "Wrong sql")
+	assert.NoError(t, mock.ExpectationsWereMet())
 
 }

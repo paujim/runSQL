@@ -3,6 +3,7 @@ module executeSQL
 go 1.12
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.4.1
 	github.com/aws/aws-lambda-go v1.17.0
 	github.com/aws/aws-sdk-go v1.31.8
 	github.com/davecgh/go-spew v1.1.1 // indirect

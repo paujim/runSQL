@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha1"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,8 +68,7 @@ func (c *LambdaHandler) Handle(dbSecretID string, event cfn.Event) (physicalReso
 func (c *LambdaHandler) getHash(s string) string {
 	h := sha1.New()
 	h.Write([]byte(s))
-	bs := h.Sum(nil)
-	return string(bs)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (c *LambdaHandler) validateParameters(event cfn.Event, dbSecretID string) (dbName, sqlQuery string, err error) {
