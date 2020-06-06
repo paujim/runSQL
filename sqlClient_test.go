@@ -35,7 +35,6 @@ func TestLambdaHandler(t *testing.T) {
 	var tests = []struct {
 		inputClient   CachedSecret
 		inputEvent    cfn.Event
-		inputSecret   string
 		expectedError string
 	}{
 		{&mockSMClient{}, cfn.Event{
@@ -44,19 +43,19 @@ func TestLambdaHandler(t *testing.T) {
 				"Database": "db",
 				"SqlQuery": "sql",
 			},
-		}, "", "Missing required 'SECRET_ID' parameter"},
+		}, "Missing required 'SecretId' parameter"},
 		{&mockSMClient{}, cfn.Event{
 			RequestType: cfn.RequestCreate,
 			ResourceProperties: map[string]interface{}{
 				"SqlQuery": "sql",
 			},
-		}, "", "Missing required 'Database' parameter"},
+		}, "Missing required 'Database' parameter"},
 		{&mockSMClient{}, cfn.Event{
 			RequestType: cfn.RequestCreate,
 			ResourceProperties: map[string]interface{}{
 				"Database": "db",
 			},
-		}, "", "Missing required 'SqlQuery' parameter"},
+		}, "Missing required 'SqlQuery' parameter"},
 		{&mockSMClient{
 			err: errors.New("Error from Secret"),
 		}, cfn.Event{
@@ -64,15 +63,17 @@ func TestLambdaHandler(t *testing.T) {
 			ResourceProperties: map[string]interface{}{
 				"Database": "db",
 				"SqlQuery": "sql",
+				"SecretId": "secret",
 			},
-		}, "Secret", "Error from Secret"},
+		}, "Error from Secret"},
 		{&mockSMClient{}, cfn.Event{
 			RequestType: cfn.RequestCreate,
 			ResourceProperties: map[string]interface{}{
 				"Database": "db",
 				"SqlQuery": "sql",
+				"SecretId": "secret",
 			},
-		}, "Secret", "unexpected end of JSON input"},
+		}, "unexpected end of JSON input"},
 		{&mockSMClient{
 			value: "Invalid Json",
 		}, cfn.Event{
@@ -80,12 +81,13 @@ func TestLambdaHandler(t *testing.T) {
 			ResourceProperties: map[string]interface{}{
 				"Database": "db",
 				"SqlQuery": "sql",
+				"SecretId": "secret",
 			},
-		}, "Secret", "invalid character 'I' looking for beginning of value"},
+		}, "invalid character 'I' looking for beginning of value"},
 	}
 
 	for _, test := range tests {
-		_, _, err := CreateLambdaHandler(test.inputClient, getDBConnection).Handle(test.inputSecret, test.inputEvent)
+		_, _, err := CreateLambdaHandler(test.inputClient, getDBConnection).Handle(test.inputEvent)
 		assert.EqualError(t, err, test.expectedError, test)
 	}
 
@@ -109,11 +111,12 @@ func TestHandlerWithSQLSuccess(t *testing.T) {
 
 	_, _, err = CreateLambdaHandler(&mockSMClient{
 		value: "{\"host\": \"host\",\"username\": \"user\",\"password\": \"password\", \"port\":1344}",
-	}, getDBConnection).Handle("SecretId", cfn.Event{
+	}, getDBConnection).Handle(cfn.Event{
 		RequestType: cfn.RequestCreate,
 		ResourceProperties: map[string]interface{}{
 			"Database": "db",
 			"SqlQuery": "UPDATE users FROM table",
+			"SecretId": "secret",
 		}})
 	assert.NoError(t, err)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -139,11 +142,12 @@ func TestHandlerWithSQLError(t *testing.T) {
 
 	_, _, err = CreateLambdaHandler(&mockSMClient{
 		value: "{\"host\": \"host\",\"username\": \"user\",\"password\": \"password\", \"port\":1344}",
-	}, getDBConnection).Handle("SecretId", cfn.Event{
+	}, getDBConnection).Handle(cfn.Event{
 		RequestType: cfn.RequestCreate,
 		ResourceProperties: map[string]interface{}{
 			"Database": "db",
 			"SqlQuery": "UPDATE users FROM table",
+			"SecretId": "secret",
 		}})
 	assert.EqualError(t, err, "Wrong sql")
 	assert.NoError(t, mock.ExpectationsWereMet())

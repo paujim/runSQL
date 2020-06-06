@@ -37,7 +37,7 @@ func CreateLambdaHandler(client CachedSecret, getDBConnection func(string) (*sql
 }
 
 // Handle ...
-func (c *LambdaHandler) Handle(dbSecretID string, event cfn.Event) (physicalResourceID string, jsonObject map[string]interface{}, err error) {
+func (c *LambdaHandler) Handle(event cfn.Event) (physicalResourceID string, jsonObject map[string]interface{}, err error) {
 	eventJSON, _ := json.MarshalIndent(event, "", "  ")
 	log.Printf("EVENT: %s\n", string(eventJSON))
 
@@ -46,8 +46,8 @@ func (c *LambdaHandler) Handle(dbSecretID string, event cfn.Event) (physicalReso
 
 	switch event.RequestType {
 	case cfn.RequestCreate:
-		var dbName, connectionString, query string
-		dbName, query, err = c.validateParameters(event, dbSecretID)
+		var dbName, dbSecretID, connectionString, query string
+		dbSecretID, dbName, query, err = c.validateParameters(event)
 		if err != nil {
 			return
 		}
@@ -72,7 +72,7 @@ func (c *LambdaHandler) getHash(s string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (c *LambdaHandler) validateParameters(event cfn.Event, dbSecretID string) (dbName, sqlQuery string, err error) {
+func (c *LambdaHandler) validateParameters(event cfn.Event) (dbSecretID, dbName, sqlQuery string, err error) {
 	var ok bool
 	dbName, ok = event.ResourceProperties["Database"].(string)
 	if !ok {
@@ -85,8 +85,9 @@ func (c *LambdaHandler) validateParameters(event cfn.Event, dbSecretID string) (
 		err = errors.New("Missing required 'SqlQuery' parameter")
 		return
 	}
-	if dbSecretID == "" {
-		err = errors.New("Missing required 'SECRET_ID' parameter")
+	dbSecretID, ok = event.ResourceProperties["SecretId"].(string)
+	if !ok {
+		err = errors.New("Missing required 'SecretId' parameter")
 		return
 	}
 	return

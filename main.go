@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"os"
 
 	"github.com/aws/aws-lambda-go/cfn"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -20,11 +19,10 @@ func init() {
 }
 
 func handler(ctx context.Context, event cfn.Event) (physicalResourceID string, jsonObject map[string]interface{}, err error) {
-
 	getDBConnection := func(connectionString string) (*sql.DB, error) {
 		return sql.Open("sqlserver", connectionString)
 	}
-	return CreateLambdaHandler(secretCache, getDBConnection).Handle(os.Getenv("SECRET_ID"), event)
+	return CreateLambdaHandler(secretCache, getDBConnection).Handle(event)
 }
 
 func main() {
